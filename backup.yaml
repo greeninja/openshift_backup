@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Template
+metadata:
+  creationTimestamp: null
+  name: backup
+objects:
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Definition for deploying backup pod
+    labels:
+      service: backup
+    name: backup
+  spec:
+    replicas: 1
+    selector:
+      name: ${APP_SERVICE_NAME}
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        annotations:
+        labels:
+          name: ${APP_SERVICE_NAME}
+          service: backup
+        name: ${APP_SERVICE_NAME}
+      spec:
+        serviceAccount: backup
+        containers:
+        - capabilities: {}
+          env: {}
+          image: docker-registry.fhpaas.fasthosts.co.uk:443/infra-backups/backup
+          imagePullPolicy: Always
+          name: ${APP_SERVICE_NAME}
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: backup-data
+              mountPath: /backup-data
+        volumes:
+        - hostPath:
+            path: /storage/infra01/infra-backup
+          name: backup-data
+    triggers:
+    - type: ConfigChange
+parameters:
+- description: Application service name
+  displayName: Application service name
+  name: APP_SERVICE_NAME
+  required: true
+  from: backup-[a-z]{5}
+  generate: expression

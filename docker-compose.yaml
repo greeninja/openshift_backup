@@ -1,0 +1,5 @@
+version: '2'
+services:
+  backup:
+    build: .
+    image: docker-registry.fhpaas.fasthosts.co.uk:443/infra-backups/backup

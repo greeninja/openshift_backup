@@ -1,0 +1,37 @@
+# loose steps to tag and push an image, plus give correct privs to serviceaccount to allow dc to pull image
+
+docker tag backup docker-registry.fhpaas.fasthosts.co.uk/infra-backups/backup
+docker login docker-registry.fhpaas.fasthosts.co.uk
+oc whoami -t
+docker login docker-registry.fhpaas.fasthosts.co.uk
+docker push docker-registry.fhpaas.fasthosts.co.uk/infra-backups/backup
+oc process -f backup.yaml | oc create -n infra-backups -f -
+oc policy add-role-to-user system:image-puller system:serviceaccount:infra-backups:backup
+oc policy add-cluster-role-to-user cluster-reader system:serviceaccount:infra-backups:backup
+
+
+oc login https://openshift-cluster.fhpaas.fasthosts.co.uk:8443 --token=`cat /run/secrets/kubernetes.io/serviceaccount/token`
+
+map ceph rbd on node
+mount ceph rbd on node
+get a list of pods to back up (use labels eventually - for now a static list perhaps)
+for each pod:
+  get mysql_root_pw
+  run oc rsh mysqldump
+
+unmap ceph rbd
+
+pod metadata labels name
+
+
+pod/dc backups:
+a directory per pod/dc
+ - month-year directory
+   - git repo
+
+
+TO DO:
+
+add vol mount to etcd for local backup dir
+
+error handling in backup script

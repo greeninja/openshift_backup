@@ -1,108 +1,176 @@
 #!/usr/bin/env ruby
+require 'fileutils'
 require 'yaml'
 require 'pp'
+
+# metadata required for backups on pods
+# metadata.labels.needs_backup: yes
+# metadata.labels.backup_type: mysql|rsync|etcd
+# metadata.annotations.backup_src: /path/to/files/for/rsync (ignored for other backup types)
+
+# backup destination tree
+# project/dc/pod_name/container_name/yyyy-mm/
+# each backup dir is a git repo
+
 
 #ret = system('oc login https://openshift-cluster.fhpaas.fasthosts.co.uk:8443 --token=$(cat /run/secrets/kubernetes.io/serviceaccount/token)')
 #puts ret
 
-pods_to_backup = {
-  'paas-staging' => {
-    'custapi-mysql':            { 'type' => 'mysql'   },
-    'clusterbuilder':           { 'type' => 'unknown' },
-    'etcd':                     { 'type' => 'unknown' },
-    'fitnesse':                 { 'type' => 'rsync', 'src_paths' => [ '/opt/fitnesse/FitNesseRoot', ] },
-  },
-  'library' => {
-    'dependencygraph-mysql':    { 'type' => 'mysql' },
-    'gogs-mysql':               { 'type' => 'mysql' },
-    'image-drone-mysql':        { 'type' => 'mysql' },
-    'template-drone-mysql':     { 'type' => 'mysql' },
-    'templaterepository-mysql': { 'type' => 'mysql' },
-    'templateupdater-mysql':    { 'type' => 'mysql' },
-  },
-}
-
-def etcd_backup (pod)
-  puts "No idea how to back up etcd so doing nothing"
-  return -1
+if ENV.include? 'DEBUG' then
+  DEBUG=ENV['DEBUG']
+else
+  DEBUG=false
 end
+puts "debug: #{DEBUG}"
 
-def unknown_backup (pod)
-  puts "No idea how to back up unknown so doing nothing"
-  return -1
-end
+class PodBackup
+  def initialize (pod_spec={}, backup_dest_root='.')
+    # metadata should be the output from "oc get pod x -o yaml"
+    @pod_spec = pod_spec
+    @metadata = @pod_spec['metadata']
+    @podname = @metadata['name']
+    @project = @metadata['namespace']
+    @backup_dest = "#{backup_dest_root}/#{@project}/#{@podname}"
 
-def rsync_backup (pod)
-  pod_name = pod['items'][0]['metadata']['name']
-
-  if pod['src_paths'] then
-    source_paths = pod['src_paths'].join(' ')
-  else
-    source_paths = '/'
+    @backup_type = @metadata['labels']['backup_type']
+    @backup_src = @metadata['annotations']['backup_src'].split(":") if @backup_type == 'rsync'
+    @backup_src = @metadata['annotations']['backup_src'] if @backup_type == 'etcd'
+    @backup_local_dest = @metadata['annotations']['backup_dest'] if @backup_type == 'etcd'
   end
 
-  backup_cmd = "oc exec -n #{pod['project']} #{pod_name} -- bash -c 'tar czf - #{source_paths}' 2> #{pod_name}.log 1> #{pod_name}.tar.gz"
-  puts "Running: #{backup_cmd}"
-
-  system("echo #{backup_cmd} > #{pod_name}.cmd")
-
-  ret = system(backup_cmd)
-  return ret
-end
-
-def mysql_backup (pod)
-
-  pod_name = pod['items'][0]['metadata']['name']
-
-  root_pw = ''
-  pod['items'][0]['spec']['containers'].each do |c|
-    pwenv = c['env'].select { |env| env['name'] == 'MYSQL_ROOT_PASSWORD' }
-    root_pw = pwenv[0]['name'] unless pwenv.empty?
+  def container_backup_dir (container_name)
+    return "#{@backup_dest}/#{container_name}/#{Time.now.strftime("%Y-%m")}"
   end
+
+  def create_backup_dir (container_name)
+    FileUtils.mkdir_p container_backup_dir(container_name), :mode => 0700
+  end
+
+  def commit_backup (dir)
+    system "cd #{dir} && git init" unless Dir.exists? "#{dir}/.git"
+    system "cd #{dir} && git add * && git commit -a -m 'Backup commited at #{Time.now}'"
+  end
+
+  def backup
+    ret = -1
+    @pod_spec['spec']['containers'].each do |container|
+      create_backup_dir container['name']
+
+      case @backup_type
+        when 'mysql'
+          puts "backing up mysql" if DEBUG
+          #ret = backup_mysql container
+        when 'rsync'
+          ret = backup_rsync container
+        when 'etcd'
+          puts "something etcd" if DEBUG
+          ret = backup_etcd container
+        else
+          puts "no backup_type for #{container['name']}"
+          next
+      end
+    commit_backup container_backup_dir(container['name'])
+    end
+
+    return ret
+  end
+
+  def backup_etcd (container)
+    backup_path = "#{container_backup_dir container['name']}"
+    logfile = "#{backup_path}/#{container['name']}.log"
+    cmdfile = "#{backup_path}/#{container['name']}.cmd"
+    backup_cmd = "oc exec -n #{@project} #{@podname} > #{logfile} 2>&1 -- /etcdctl backup --data-dir=#{@backup_src} --backup-dir=#{@backup_local_dest}"
+    puts "Running: #{backup_cmd}" if DEBUG
+    ret = system(backup_cmd)
+
+    File.open(cmdfile, 'w') { |f| File.write f, "#{backup_cmd}\n" }
+
+    puts "would run - #{backup_cmd}"
+    return ret
+  end
+
+  def backup_mysql (container)
+
+    backup_path = "#{container_backup_dir container['name']}"
+
+    metapw = container['env'].select { |env| env['name'] == 'MYSQL_ROOT_PASSWORD' }
+    begin
+      root_pw = metapw[0]['name']
+    rescue
+      root_pw = ''
+    end
 
     mysqldump_cmd = "mysqldump -u root --all-databases"
-  unless root_pw.empty? then
-    mysqldump_cmd += " -p$#{root_pw}"
+    mysqldump_cmd += " -p\\\$#{root_pw}" unless root_pw.empty?
+
+    sqlfile = "#{backup_path}/#{container['name']}.sql"
+    logfile = "#{backup_path}/#{container['name']}.log"
+    cmdfile = "#{backup_path}/#{container['name']}.cmd"
+
+    backup_cmd = "oc exec -n #{@project} #{@podname} -c #{container['name']} -- bash -c \"#{mysqldump_cmd}\" 2> #{logfile} > #{sqlfile}"
+    puts "Running: #{backup_cmd}" if DEBUG
+
+    File.open(cmdfile, 'w') { |f| File.write f, "#{backup_cmd}\n" }
+
+    ret = system(backup_cmd)
+    return ret
   end
 
-  backup_cmd = "oc exec  -n #{pod['project']} #{pod_name} -- bash -c '#{mysqldump_cmd}' 2> #{pod_name}.log | gzip > #{pod_name}.sql.gz"
-  puts "Running: #{backup_cmd}"
+  def backup_rsync (container)
 
-  system("echo #{backup_cmd} > #{pod_name}.cmd")
+    backup_path = "#{container_backup_dir container['name']}"
 
-  ret = system(backup_cmd)
-  return ret
-end
+    if defined? @backup_src then
+      source_paths = @backup_src.join(' ')
+    else
+      source_paths = '/'
+    end
 
-pod_hash = {}
+    tarfile = "#{backup_path}/#{container['name']}.tar.gz"
+    logfile = "#{backup_path}/#{container['name']}.log"
+    cmdfile = "#{backup_path}/#{container['name']}.cmd"
 
-pods_to_backup.each do |proj,pods|
-  pods.each do |pod,v|
-    pod_hash[pod] ||= {}
-    pod_hash[pod] = YAML.load(`oc get pods -l="deploymentconfig=#{pod}" -n #{proj} -o yaml`)
-    pod_hash[pod]['project'] = proj
-    pod_hash[pod]['type'] = v['type']
-    pod_hash[pod]['src_paths'] = v['src_paths']
+    backup_cmd = "oc exec -n #{@project} #{@podname} -c #{container['name']} -- bash -c \"tar czf - #{source_paths}\" 2> #{logfile} 1> #{tarfile}"
+
+    File.open(cmdfile, 'w') { |f| File.write f, "#{backup_cmd}\n" }
+
+    puts "Running: #{backup_cmd}" if DEBUG
+    ret = system(backup_cmd)
+    return ret
+
   end
+
 end
 
-pod_hash.each do |name,v|
- puts "name: #{name}"
- puts "project: #{v['project']}"
- puts "type: #{v['type']}"
+##########################################################################
+
+YAML.load(`oc get pods --all-namespaces  -l needs_backup="yes" -o yaml`)['items'].each do |pod|
+
+  p = PodBackup.new pod
+  ret = p.backup
+  puts "Backup of #{pod['metadata']['name']} completed successfully." if ret
+  puts "Backup of #{pod['metadata']['name']} FAILED." unless ret
+
 end
 
-pod_hash.each do  |name,pod|
-  puts "backing up pod #{name}"
-  case pod['type']
-    when 'mysql'
-      mysql_backup pod
-    when 'etcd'
-      etcd_backup pod
-    when 'rsync'
-      rsync_backup pod
-    when 'unknown'
-      unknown_backup pod
-  end
-end
+
+exit 0
+
+##########################################################################
+pods_to_backup = {
+  'paas-staging' => {
+    'custapi-mysql'  => { 'type' => 'mysql'   },
+    'clusterbuilder' => { 'type' => 'unknown' },
+    'etcd'           => { 'type' => 'unknown' },
+    'fitnesse'       => { 'type' => 'rsync', 'src_paths' => [ '/opt/fitnesse/FitNesseRoot', ] },
+  },
+  'library' => {
+    'dependencygraph-mysql'    => { 'type' => 'mysql' },
+    'gogs-mysql'               => { 'type' => 'mysql' },
+    'image-drone-mysql'        => { 'type' => 'mysql' },
+    'template-drone-mysql'     => { 'type' => 'mysql' },
+    'templaterepository-mysql' => { 'type' => 'mysql' },
+    'templateupdater-mysql'    => { 'type' => 'mysql' },
+  },
+}
 
