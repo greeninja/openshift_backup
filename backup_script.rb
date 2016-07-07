@@ -12,16 +12,24 @@ require 'pp'
 # project/dc/pod_name/container_name/yyyy-mm/
 # each backup dir is a git repo
 
-
-#ret = system('oc login https://openshift-cluster.fhpaas.fasthosts.co.uk:8443 --token=$(cat /run/secrets/kubernetes.io/serviceaccount/token)')
-#puts ret
-
 if ENV.include? 'DEBUG' then
   DEBUG=ENV['DEBUG']
 else
   DEBUG=false
 end
 puts "debug: #{DEBUG}"
+
+
+# NEED TO MAKE THIS BETTER
+ret = system('oc status >/dev/null 2>&1')
+unless ret then
+  puts "Logging into openshift with serviceaccount" if DEBUG
+  ret = system('oc login https://openshift-cluster.fhpaas.fasthosts.co.uk:8443 --token=$(cat /run/secrets/kubernetes.io/serviceaccount/token)')
+  unless ret then
+    puts "Unable to log into openshift"
+    exit 1
+  end
+end
 
 class PodBackup
   def initialize (pod_spec={}, backup_dest_root='.')
@@ -59,7 +67,7 @@ class PodBackup
       case @backup_type
         when 'mysql'
           puts "backing up mysql" if DEBUG
-          #ret = backup_mysql container
+          ret = backup_mysql container
         when 'rsync'
           ret = backup_rsync container
         when 'etcd'
