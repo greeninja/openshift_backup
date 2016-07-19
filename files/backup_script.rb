@@ -21,11 +21,11 @@ else
   DEBUG=false
 end
 
-log = Logger.new("| tee backup_script.log")
+@global_logger = Logger.new("| tee backup_script.log")
 if DEBUG then
-  log.level = Logger::DEBUG
+  @global_logger.level = Logger::DEBUG
 else
-  log.level = Logger::INFO
+  @global_logger.level = Logger::INFO
 end
 
 if ENV.include? 'FAKESYSTEM' then
@@ -37,16 +37,9 @@ end
 BACKUP_DEST_ROOT='backup-data'
 
 def die (msg)
-  log.info msg
+  @global_logger.info msg
   exit 1
 end
-
-if File.exists? '/var/run/secrets/kubernetes.io/serviceaccount/token' then
-  log.info "Logging into openshift with serviceaccount"
-  ret = system('oc login https://openshift-cluster.fhpaas.fasthosts.co.uk:8443 --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)')
-end
-ret = system('oc status >/dev/null 2>&1')
-die "Unable to log into openshift" unless ret
 
 class PodBackup
   def initialize (pod_spec={}, backup_dest_root='.', log)
@@ -68,10 +61,6 @@ class PodBackup
     @runasuser = @pod_spec['spec']['securityContext']['runAsUser'] if @pod_spec['spec']['securityContext'].key? 'runAsUser'
     @containers = {}
     @pod_spec['spec']['containers'].each {|c| @containers[c['name']] ||= {} }
-  end
-
-  def log(msg)
-    log.info msg # will log to both STDOUT and file
   end
 
   def system_wrapper(cmd)
@@ -249,40 +238,61 @@ end
 @yaml_loaded = false
 
 def load_pod_yaml
-  YAML.load(`oc get pods --all-namespaces  -l needs_backup="yes" -o yaml`)
+  ret = YAML.load(`oc get pods --all-namespaces  -l needs_backup="yes" -o yaml`)
   @yaml_loaded = true
+  return ret
+end
+
+def oc_login(silent=false)
+  if File.exists? '/var/run/secrets/kubernetes.io/serviceaccount/token' then
+    @global_logger.info "Logging into openshift with serviceaccount" unless silent
+    ret = system('oc login https://openshift-cluster.fhpaas.fasthosts.co.uk:8443 --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token) > /dev/null 2>&1')
+  end
+  ret = system('oc status >/dev/null 2>&1')
+  die "Unable to log into openshift" unless ret
 end
 
 if ARGV.include? 'status' then
-  load_pod_yaml
+  oc_login true
+  y = load_pod_yaml
   all_good = true
+  errors = []
   y['items'].each do |pod|
-    p = PodBackup.new pod, BACKUP_DEST_ROOT, log
-    all_good = false unless p.within_24?
+    p = PodBackup.new pod, BACKUP_DEST_ROOT, @global_logger
+    unless p.within_24? then
+      errors << "Pod #{pod['metadata']['name']} does not have a backup within 24 hours"
+      all_good = false
+    end
   end
-  puts all_good
+  if all_good then
+    puts "OK"
+  else
+    puts errors.join("\n")
+  end
   exit all_good
 end
 
 if ARGV.include? 'purge' then
-  load_pod_yaml
+  oc_login
+  y = load_pod_yaml
   y['items'].each do |pod|
-    p = PodBackup.new pod, BACKUP_DEST_ROOT, log
+    p = PodBackup.new pod, BACKUP_DEST_ROOT, @global_logger
     puts p.remove_old_backups
   end
 end
 
 if ARGV.include? 'run' then
-  load_pod_yaml
+  oc_login
+  y = load_pod_yaml
   all_good = true
   y['items'].each do |pod|
-    log.info "Backing up pod #{pod['metadata']['name']}"
-    p = PodBackup.new pod, BACKUP_DEST_ROOT, log
+    @global_logger.info "Backing up pod #{pod['metadata']['name']}"
+    p = PodBackup.new pod, BACKUP_DEST_ROOT, @global_logger
     ret = p.backup
-    log.info "pod:success: #{p.last_success}"
+    @global_logger.info "pod:success: #{p.last_success}"
     all_good = false unless ret
     unless ret then
-      log.info "Backup for pod: #{pod['metadata']['name']} failed"
+      @global_logger.info "Backup for pod: #{pod['metadata']['name']} failed"
     end
 
   end

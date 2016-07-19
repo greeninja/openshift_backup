@@ -5,6 +5,32 @@ metadata:
   name: backup
 objects:
 - apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: backup
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      description: Exposes and load balances the application pods
+    name: ${APP_SERVICE_NAME}
+  spec:
+    ports:
+    - name: web
+      port: 8080
+      targetPort: 8080
+    selector:
+      name: ${APP_SERVICE_NAME}
+- apiVersion: v1
+  kind: Route
+  metadata:
+    name: ${APP_SERVICE_NAME}
+  spec:
+    host: ${APPLICATION_DOMAIN}
+    to:
+      kind: Service
+      name: ${APP_SERVICE_NAME}
+- apiVersion: v1
   kind: DeploymentConfig
   metadata:
     annotations:
@@ -51,3 +77,8 @@ parameters:
   required: true
   from: backup-[a-z]{5}
   generate: expression
+- description: The exposed hostname that will route to the pod
+  displayName: Application Hostname
+  name: APPLICATION_DOMAIN
+  required: true
+  value: backupstatus.fhpaas.fasthosts.co.uk
