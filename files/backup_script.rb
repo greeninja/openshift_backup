@@ -268,6 +268,7 @@ if ARGV.include? 'status' then
     puts "OK: ALL BACKUPS WITHIN 24 HOURS"
   else
     puts errors.join("\n")
+    puts errors.map{ |e| '<p>' + e + '</p>' }.join("\n")
   end
   exit all_good
 end
