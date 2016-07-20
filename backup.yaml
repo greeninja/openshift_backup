@@ -5,6 +5,10 @@ metadata:
   name: backup
 objects:
 - apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: backup
+- apiVersion: v1
   kind: ServiceAccount
   metadata:
     name: backup
@@ -56,7 +60,7 @@ objects:
         containers:
         - capabilities: {}
           env: {}
-          image: docker-registry.fhpaas.fasthosts.co.uk:443/infra-backups/backup
+          image: ${IMAGE}
           imagePullPolicy: Always
           name: ${APP_SERVICE_NAME}
           securityContext:
@@ -64,19 +68,42 @@ objects:
           volumeMounts:
             - name: backup-data
               mountPath: /backup-data
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            timeoutSeconds: 1
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            timeoutSeconds: 1
         volumes:
         - hostPath:
             path: /storage/infra01/infra-backup
           name: backup-data
     triggers:
     - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+          - ${APP_SERVICE_NAME}
+        from:
+          kind: ImageStreamTag
+          name: backup:latest
 parameters:
 - description: Application service name
   displayName: Application service name
   name: APP_SERVICE_NAME
   required: true
-  from: backup-[a-z]{5}
-  generate: expression
+  value: backup
+- description: backup image
+  name: IMAGE
+  value: 172.30.67.249:5000/infra-backups/backup
+  required: true
 - description: The exposed hostname that will route to the pod
   displayName: Application Hostname
   name: APPLICATION_DOMAIN

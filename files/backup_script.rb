@@ -265,7 +265,7 @@ if ARGV.include? 'status' then
     end
   end
   if all_good then
-    puts "OK"
+    puts "OK: ALL BACKUPS WITHIN 24 HOURS"
   else
     puts errors.join("\n")
   end
