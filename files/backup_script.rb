@@ -34,7 +34,7 @@ else
   FAKESYSTEM=false
 end
 
-BACKUP_DEST_ROOT='backup-data'
+BACKUP_DEST_ROOT='/backup-data'
 
 def die (msg)
   @global_logger.info msg
