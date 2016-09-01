@@ -174,7 +174,7 @@ class PodBackup
     logfile = "#{backup_path}/#{container['name']}.log"
     cmdfile = "#{backup_path}/#{container['name']}.cmd"
     backup_cmd = "oc exec -n #{@project} #{@podname} -c #{container['name']} > \"#{logfile}\" 2>&1 -- "
-    backup_cmd << "/etcdctl backup"
+    backup_cmd << "./etcdctl backup"
     backup_cmd << " --data-dir=\"#{@backup_src[0]}\""
     backup_cmd << " --backup-dir=\"#{etcd_local_backup_dir container['name']}\""
 
