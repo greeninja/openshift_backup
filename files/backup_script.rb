@@ -174,7 +174,7 @@ class PodBackup
     logfile = "#{backup_path}/#{container['name']}.log"
     cmdfile = "#{backup_path}/#{container['name']}.cmd"
     backup_cmd = "oc exec -n #{@project} #{@podname} -c #{container['name']} > \"#{logfile}\" 2>&1 -- "
-    backup_cmd << "/etcdctl backup"
+    backup_cmd << "/etcd/etcdctl backup"
     backup_cmd << " --data-dir=\"#{@backup_src[0]}\""
     backup_cmd << " --backup-dir=\"#{etcd_local_backup_dir container['name']}\""
 
@@ -260,7 +260,7 @@ if ARGV.include? 'status' then
   y['items'].each do |pod|
     p = PodBackup.new pod, BACKUP_DEST_ROOT, @global_logger
     unless p.within_24? then
-      errors << "Pod #{pod['metadata']['name']} does not have a backup within 24 hours"
+      errors << "Pod #{pod['metadata']['namespace']}/#{pod['metadata']['name']} does not have a backup within 24 hours"
       all_good = false
     end
   end
@@ -287,13 +287,13 @@ if ARGV.include? 'run' then
   y = load_pod_yaml
   all_good = true
   y['items'].each do |pod|
-    @global_logger.info "Backing up pod #{pod['metadata']['name']}"
+    @global_logger.info "Backing up pod #{pod['metadata']['namespace']}/#{pod['metadata']['name']}"
     p = PodBackup.new pod, BACKUP_DEST_ROOT, @global_logger
     ret = p.backup
     @global_logger.info "pod:success: #{p.last_success}"
     all_good = false unless ret
     unless ret then
-      @global_logger.info "Backup for pod: #{pod['metadata']['name']} failed"
+      @global_logger.info "Backup for pod: #{pod['metadata']['namespace']}/#{pod['metadata']['name']} failed"
     end
 
   end
