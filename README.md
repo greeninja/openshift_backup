@@ -6,6 +6,7 @@ Currently supported:
   - etcd
   - mysql
   - local content (via rsync)
+  - mongodb
 
 
 Prerequisites:
