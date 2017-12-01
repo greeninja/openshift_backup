@@ -20,11 +20,17 @@ if ENV.include? 'DEBUG' then
 else
   DEBUG=false
 end
-  
+
 if ENV.include? 'MASTERURL' then
   MASTERURL=ENV['MASTERURL']
 else
   MASTERURL="openshift-cluster.fhpaas.fasthosts.co.uk"
+end
+
+if ENV.include? 'MASTERINSECURE' then
+  login_flags="--insecure-skip-tls-verify=true"
+else
+  login_flags=""
 end
 
 @global_logger = Logger.new("| tee backup_script.log")
