@@ -6,7 +6,7 @@ require 'logger'
 
 # metadata required for backups on pods
 # metadata.labels.needs_backup: yes
-# metadata.labels.backup_type: mysql|rsync|etcd
+# metadata.labels.backup_type: mysql|rsync|etcd|mongodb
 # metadata.annotations.backup_src: /path/to/files/for/rsync (ignored for other backup types)
 
 # uses: pod.container.securityContext.runAsUser
@@ -149,6 +149,9 @@ class PodBackup
         when 'etcd'
           create_backup_dir container['name']
           ret = backup_etcd container
+        when 'mongodb'
+          create_backup_dir container['name']
+          ret = backup_mongodb container
         else
           @log.info "no backup_type for #{container['name']}"
           ret = false
@@ -225,6 +228,24 @@ class PodBackup
 
     backup_cmd = "oc exec -n #{@project} #{@podname} -c #{container['name']} -- "
     backup_cmd << "bash -c \"tar czf - #{source_paths}\" 2> \"#{logfile}\" 1> \"#{tarfile}\""
+    @log.debug "Running: #{backup_cmd}"
+
+    File.open(cmdfile, 'w') { |f| File.write f, "#{backup_cmd}\n" }
+
+    return system_wrapper(backup_cmd)
+  end
+
+  def backup_mongodb (container)
+    backup_path = "#{container_backup_dir container['name']}"
+
+    mongodump_cmd = "mongodump --archive --gzip"
+
+    archiveFile = "#{backup_path}/#{container['name']}-archive.gz"
+    logfile = "#{backup_path}/#{container['name']}.log"
+    cmdfile = "#{backup_path}/#{container['name']}.cmd"
+
+    backup_cmd = "oc exec -n #{@project} #{@podname} -c #{container['name']} 2> \"#{logfile}\" -- "
+    backup_cmd << "bash -c \"#{mongodump_cmd}\" > \"#{archiveFile}\""
     @log.debug "Running: #{backup_cmd}"
 
     File.open(cmdfile, 'w') { |f| File.write f, "#{backup_cmd}\n" }
