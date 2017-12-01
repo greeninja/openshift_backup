@@ -30,7 +30,7 @@ end
 if ENV.include? 'MASTERINSECURE' then
   login_flags="--insecure-skip-tls-verify=true"
 else
-  login_flags=""
+  login_flags="--insecure-skip-tls-verify=false"
 end
 
 @global_logger = Logger.new("| tee backup_script.log")
