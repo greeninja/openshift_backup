@@ -59,8 +59,16 @@ class PodBackup
     @backup_src = @metadata['annotations']['backup_src'].split(':') if @metadata['annotations'].key? 'backup_src'
     @local_backup_dest = @metadata['annotations']['backup_dest'] if @backup_type == 'etcd'
     @runasuser = @pod_spec['spec']['securityContext']['runAsUser'] if @pod_spec['spec']['securityContext'].key? 'runAsUser'
-    @containers = {}
-    @pod_spec['spec']['containers'].each {|c| @containers[c['name']] ||= {} }
+
+    # For multi container pods, typically only one container will require backup. Look for
+    # a 'backup_containers' label, otherwise backup all containers
+    @backup_container_names = if @metadata['labels'].key? 'backup_containers' then
+      @metadata['labels']['backup_containers'].split(',').map(&:strip)
+    else
+      @pod_spec['spec']['containers'].map{|c| c['name']}
+    end
+
+    @containers = @pod_spec['spec']['containers'].select {|container| @backup_container_names.include?(container['name'])}
   end
 
   def system_wrapper(cmd)
@@ -137,7 +145,7 @@ class PodBackup
       @log.info "Skipping #{@podname} as backup with same timestamp already exists"
       return true
     end
-    @pod_spec['spec']['containers'].each do |container|
+    @containers.each do |container|
 
       case @backup_type
         when 'mysql'
@@ -157,16 +165,11 @@ class PodBackup
           ret = false
       end
 
-      @containers[container['name']]['success'] = ret
+      container['backup_success'] = ret
     end
 
-    overall_success = true
-    @containers.each do |container,v|
-      overall_success = false unless v['success']
-    end
-
+    overall_success = @containers.all? {|container| container['backup_success']}
     touch_success_file if overall_success
-
     return overall_success
   end
 
@@ -217,7 +220,7 @@ class PodBackup
     backup_path = "#{container_backup_dir container['name']}"
 
     if defined? @backup_src then
-      source_paths += " " + @backup_src.map{ |e| '"' + e + '"' }.join(' ')
+      source_paths = " " + @backup_src.map{ |e| '"' + e + '"' }.join(' ')
     else
       source_paths = '"/"'
     end
