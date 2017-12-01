@@ -28,9 +28,9 @@ else
 end
 
 if ENV.include? 'MASTERINSECURE' then
-  login_flags="--insecure-skip-tls-verify=true"
+  MASTERINSECURE="--insecure-skip-tls-verify=true"
 else
-  login_flags="--insecure-skip-tls-verify=false"
+  MASTERINSECURE="--insecure-skip-tls-verify=false"
 end
 
 @global_logger = Logger.new("| tee backup_script.log")
@@ -282,7 +282,7 @@ end
 def oc_login(silent=false)
   if File.exists? '/var/run/secrets/kubernetes.io/serviceaccount/token' then
     @global_logger.info "Logging into openshift with serviceaccount" unless silent
-    ret = system("oc login https://#{MASTERURL}:8443 --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token) #{login_flags} > /dev/null 2>&1")
+    ret = system("oc login https://#{MASTERURL}:8443 --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token) #{MASTERINSECURE} > /dev/null 2>&1")
   end
   ret = system('oc status >/dev/null 2>&1')
   die "Unable to log into openshift" unless ret
